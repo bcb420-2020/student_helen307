@@ -1,0 +1,503 @@
+---
+title: "BCB420 - Assignment 1"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+* __Code Reference__: some of the code are produced by Ruth Isserlin, lecture three and  four. https://risserlin.github.io/BCB420-lectures-public/lecture4_data_exploration_and_normalization.html#1
+```{r package installation}
+# ======= INSTALL =======
+
+if (! requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+if (! requireNamespace("GEOquery", quietly = TRUE)) {
+  BiocManager::install("GEOquery")
+}
+if (! requireNamespace("edgeR", quietly = TRUE)) {
+  BiocManager::install("edgeR")
+}
+if (! requireNamespace("knitr", quietly = TRUE)) {
+  BiocManager::install("knitr")
+}
+if (! requireNamespace("kableExtra", quietly = TRUE)) {
+  BiocManager::install("kableExtra")
+}
+if (! requireNamespace("biomaRt", quietly = TRUE)) {
+  BiocManager::install("biomaRt")
+}
+if (! requireNamespace("EnsDb.Hsapiens.v75", quietly = TRUE)) {
+  BiocManager::install("EnsDb.Hsapiens.v75")
+}
+if (! requireNamespace("tidyverse", quietly = TRUE)) {
+  BiocManager::install("tidyverse")
+}
+if (! requireNamespace("limma", quietly = TRUE)) {
+  BiocManager::install("limma")
+}
+# ======= LOAD LIBRARYS =======
+library(edgeR)
+library(knitr)
+library(kableExtra)
+library(GEOquery)
+library(biomaRt)
+library(EnsDb.Hsapiens.v75)
+library(tidyverse)
+library(limma)
+```
+### Step 1: Select expression dataset
+* **Dataset** [GSE84054](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE84054): Transcriptome profiling of ER+ breast cancer primary tumor and its tumorsphere derivative: 
+* **Title** [PMID: 28967919](https://www.ncbi.nlm.nih.gov/pubmed/28967919): Chromosome 1q21.3 amplification is a trackable biomarker and actionable target for breast cancer recurrence. 
+* **Background info**: Tumorshpheres enriched in TIC usually survive cancer therapy. 
+* **Goal**: Identify TIC-associated genetic changes in breast cancer.
+* **Experiment**: RNA expression profiled in the ER+ primary tumor(control) and the matching tumorspheres. The experiment found the genes that are differentially expressed in the two groups. There are 1401 genes upregulated in TIC, including two subgroups: 86 genes are on chromosome 1 and 38 genes on chromosome 8. Out of the 86 genes on chromosome 1, 17 genes are clustered at 1q21.3. Amplification of 17 genes at 1q21.3 can be found in all breast cancer subtypes, and they are the ones that had significant shorter time to death.
+* **Result**: 1q21.3 amplification as highly enriched in TICs and recurrent tumours. The experiment finds 1q21.3-directed S100A7/8/9–IRAK1 feedback loop which can be a trackable biomarker.
+
+#### 1.1 Download data
+* need to make sure not to download everytime
+```{r}
+# Download dataset
+datafile <- "GSE84054_Rawcount_12patientER.txt.gz"
+if (!file.exists(datafile)) {
+    sfiles <- GEOquery::getGEOSuppFiles('GSE84054', makeDirectory = FALSE)
+}
+expr <- read.delim(datafile,header=TRUE,check.names=FALSE)
+(fnames <- rownames(sfiles)) # contain both normalized and rawcount
+expr <- read.delim(fnames[2],header=TRUE, check.names = FALSE) # rawcount
+
+# Display rawcount file
+kable(expr[1:5,1:5], format = "html")
+```
+#### 1.2 Data coverage
+* Covers 57268 genes
+```{r}
+dim(expr) # 57268    25
+```
+### Step 2: Clean the data and map to HUGO symbols
+#### 2.1: Assess rawdata quality for the control and test conditions in your dataset
+
+* **define groups**: | sample | patient | cell_type |
+* __cell type__: primary tumour (first 12), sphere: (last 12)
+* __patient__: 1-12 (primary tumour), 1-12 (sphere)
+```{r}
+samples <- data.frame("patients" = 1:24,"cell_type"=1:24)
+rownames(samples) <- colnames(expr)[2:25]
+
+for (i in 1:12){
+  samples$cell_type[i] = "Primary Tumour"
+  samples$patients[i] = i
+  samples$patients[i + 12] = i
+}
+
+for (j in 13:24){
+  samples$cell_type[j] = "Sphere"
+}
+
+# display grouped format
+kable(samples, format = "html")  
+```
+
+#### 2.2: check GENEID duplication
+
+* __Result__: no duplicated ensembl ids
+```{r}
+(expr_dup <- length(expr[which(duplicated(expr[,1]))]))
+```
+
+#### 2.3: get rid of low counts
+* __Result table__: expr_filtered: same as expr, but without low counts
+```{r}
+# translate out counts into counts per million
+cpms = cpm(expr[,2:25])
+rownames(cpms) <- expr[,1]
+# get rid of low counts
+keep = rowSums(cpms > 1) >= 3
+expr_filtered <- expr[keep,]
+outliers_removed <- nrow(expr) - nrow(expr_filtered) # 37395
+
+# Display rawcount file
+kable(expr_filtered[1:5,1:5], format = "html")
+```
+
+#### 2.4: Inspect number of genes left
+* __Result__: filtered 37395 genes out, _19873_ left
+```{r}
+dim(expr_filtered)  # 19873
+# number of genes filtered out
+(filtered_out <- nrow(expr) - nrow(expr_filtered)) # 37395
+```
+#### 2.5: Identifier Mapping
+
+* __Purpose__: map expr_filtered ensembl ids to HUGO gene symbol.
+* The paper specified their usage of hg19, which is equivalent to GRCh37. [Reference: https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.13/]
+  * __Result__: 700 genes are not mapped
+  * __Solution__: used EnsDb.Hsapiens.v75 which is related to GRCh37. [Reference: https://genomicsclass.github.io/book/pages/bioc1_annoCheat.html]
+It results a higher coverage than grch37: only 17 unmapped genes
+
+```{r}
+# ensembldb::select need character vector as input
+ensembl_id <- as.character(expr_filtered[,1])
+
+EnsDb_trans_ensembl<- ensembldb::select(EnsDb.Hsapiens.v75,
+                                         keys = ensembl_id, 
+                                         columns="SYMBOL",
+                                         keytype="GENEID")
+
+data.frame(EnsDb_trans_ensembl)
+nrow(EnsDb_trans_ensembl) # 19856 ids are mapped
+
+# convert the duplicated gene names, find multiple ensembl id
+# This is the reason why the symbols are not unique
+# Solution: only map the gene symbol to the gene id with the max expression
+# https://www.researchgate.net/post/How_to_deal_with_multiple_ensemble_IDs_mapping_to_one_gene_symbol_in_a_RNA-Seq_dataset
+# geneSymbols <-"Y_RNA"
+# geneIDs2 <- ensembldb::select(EnsDb.Hsapiens.v75, 
+#                               keys= geneSymbols, 
+#                               keytype = "SYMBOL", 
+#                               columns = c("SYMBOL","GENEID"))
+```
+
+#### 2.6: Inspect unmapped ensembl ids
+* __Observation__: The duplicated ids all have "R".
+* __Result__: the unmapped ensembl ids are actually duplicates, the reason why they were not detected in Step 1 is because they are located on the Y chromosomes, but exactly the same ensembl id if their ids were changed from "R" -> "0". [Reference: https://groups.google.com/a/soe.ucsc.edu/forum/#!topic/genome/m8uCeBa8byI]
+```{r}
+# create copy of expr_filtered
+test_filtered <- expr_filtered
+
+# merge mapped df EnsDb_trans_ensembl and unmapped df test_filtered
+test_filtered <- merge(EnsDb_trans_ensembl,
+                       test_filtered, 
+                       by.x=1,by.y=1, all.y=TRUE )
+# nrow(test_filtered) # 19873
+kable(test_filtered[1:5, 1:5], format = "html")  
+
+# duplicated ensembl id
+
+dup_gene_id <- (test_filtered$GENEID[which(is.na(test_filtered$SYMBOL))])
+length(dup_gene_id) # 17
+
+# display the unmapped ensembl ids
+kable(test_filtered[which(is.na(test_filtered$SYMBOL)),][,1:5], format = "html")
+```
+#### 2.7: Prove Step 2.6
+
+* __Purpose__: Prove that if we replace "R" with "0", then the ids can be detected as duplicates
+* __Solution__:
+  1. Replace "R" with "0"
+  2. Map modified ids to names
+  3. Merge mapped dataframe(17 mapped) with previous mapped dataframe(19856 mapped) -> get a 19873 df
+  4. Check id duplication -> 17
+  5. Delete the rows that contains the 17 duplicates
+  __Proved!!!__
+```{r}
+# replace "R" with "0"
+dup_gene_id <- as.character(dup_gene_id)
+dup_gene_id_mod<- lapply(data, function(x) gsub(pattern="R", "0", dup_gene_id))
+dup_gene_id_mod <- data.frame(dup_gene_id_mod$list)
+nrow(dup_gene_id_mod) # 17
+
+# perform the mapping again for the 17 unmapped gene ids
+ensembl_id_17 <- as.character(dup_gene_id_mod[,1])
+EnsDb_trans_ensembl_17<- ensembldb::select(EnsDb.Hsapiens.v75,
+                                         keys = ensembl_id_17, 
+                                         columns="SYMBOL",
+                                         keytype="GENEID")
+data.frame(EnsDb_trans_ensembl_17)
+nrow(EnsDb_trans_ensembl_17) # 17 mapped
+
+
+# merge the modified version into the translated EnsDb_trans_ensembl
+test_filtered_bind <- rbind(EnsDb_trans_ensembl_17, EnsDb_trans_ensembl)
+nrow(test_filtered_bind) # 19873
+
+
+# check id duplication
+(num_dup_id <- length(test_filtered$GENEID[which(duplicated(test_filtered$GENEID))])) # 17 duplicated
+# PROVED: the 17 should not be considered at all.
+
+# Therefore, delete the rows that contains the 17 duplicates
+test_filtered <- test_filtered[-which(is.na(test_filtered$SYMBOL)),]
+nrow(test_filtered)
+expr_filtered <- test_filtered
+nrow(expr_filtered) # 19856
+rownames(expr_filtered) <- 1:nrow(expr_filtered)
+(num_dup_id <- length(expr_filtered$GENEID[which(duplicated(expr_filtered$GENEID))])) # 0 duplicated
+# continue with expr_filtered (0 duplicated ensembl id)
+
+all(EnsDb_trans_ensembl$GENEID == expr_filtered$GENEID) # TRUE
+all(EnsDb_trans_ensembl$SYMBOL == expr_filtered$SYMBOL) # TRUE
+
+```
+#### 2.8: Gene name duplication
+
+* __Purpose__: Check whether several ensembl ids are mapped to the same gene name.
+* __Result__: 12 distinct symbols (41 in total) corresponds to 41 ensembl ids. 
+```{r}
+dup_gene_name <- (expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
+length(dup_gene_name) # 41
+final_dup_gene_name <- unique(expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
+length(final_dup_gene_name) # 12
+```
+#### 2.9: Deal with duplicated name 
+
+* __Purpose__: Inspect the reason why several ids are mapped to the same gene name. 
+* __Reason__: They may be haplotypes.
+* __Solution__: 
+  1. Calculate the expression for all ids (use expr_filtered instead of normalized df since normalized df will have the same total expression)
+  1. Map back the gene names 
+  2. Find ensembl id that has the highest expression. 
+  3. Delete the rest
+  4. Check duplication again
+  [Reference: https://www.researchgate.net/post/How_to_deal_with_multiple_ensemble_IDs_mapping_to_one_gene_symbol_in_a_RNA-Seq_dataset]
+
+##### 2.91 Calculate expression for all ids
+* __Purpose__: To create another column that contains the total expression for each gene across all samples.
+* __Result__: expr_filtered now has a column with calculated values
+```{r}
+# delete two columns for total expression calculation
+test_expr_filtered <- expr_filtered
+no_name_expr_filtered <- test_expr_filtered[, -1]
+no_name_expr_filtered <- no_name_expr_filtered[, -1]
+rownames(no_name_expr_filtered) <- test_expr_filtered$GENEID
+# View(no_name_expr_filtered)
+
+# calculate total expression of each gene
+total <- data.frame(rowSums(no_name_expr_filtered))
+#View(total)
+expr_filtered <- cbind("TOTAL"=total, expr_filtered)
+kable(expr_filtered[1:5,1:5], format = "html")
+```
+
+##### 2.92 Find all ensembl ids that are associated with the 12 duplicated symbols
+* __Purpose__: Determine the matched ensembl ids. They are the ones I need to filter, and only keep 12 in total at the end.
+* __Result__: There are 53 ensembls ids. So 53-12=29 needs to be filtered out.
+```{r}
+f <- character(0)
+for (i in 1:length(final_dup_gene_name)){
+  ensembl_id_match <- expr_filtered$GENEID[which(expr_filtered$SYMBOL == final_dup_gene_name[i])]
+  f <- append(f, ensembl_id_match)
+}
+length(f) # 53 ensembl ids are associated, we only need 12/53
+```
+
+##### 2.93 Find the matched ensembl ids with the highest expression value
+* __Purpose__: title
+* __Result__: find the 12 ensembl ids we are going to keep.
+```{r}
+ensembl_selected <- character(0)
+for (i in 1:length(final_dup_gene_name)){
+  max_expr <- max(expr_filtered$rowSums.no_name_expr_filtered.[which(expr_filtered$SYMBOL == final_dup_gene_name[i])])
+  diff_ensembl <- expr_filtered$GENEID[which((expr_filtered$rowSums.no_name_expr_filtered. == max_expr) & (expr_filtered$SYMBOL == final_dup_gene_name[i]))]
+  ensembl_selected[i] <- diff_ensembl
+}
+length(ensembl_selected) # 12
+kable(ensembl_selected, format = "html")
+```
+
+##### 2.94 Delete the rest that are not selected
+* __Purpose__: title
+* __Result__: Updataed expr_filtered. Now 19815 genes. 29 are filtered out in the last step.
+```{r}
+# not selected
+delete_ensembl <- setdiff(f, ensembl_selected)
+length(delete_ensembl) # 41, we need to delete them
+nrow(expr_filtered) # 19815 as expected (19856 - 41)
+rownames(expr_filtered) <- 1:nrow(expr_filtered)
+
+test <- expr_filtered
+# delete the 41
+for(i in 1:length(delete_ensembl)){
+  test <- test[-c(which(test$GENEID == delete_ensembl[i])),]
+}
+nrow(test) # 19815
+
+expr_filtered <- test
+rownames(expr_filtered) <- 1:nrow(expr_filtered)
+nrow(expr_filtered) # 19815
+kable(expr_filtered[1:5, 1:5], format = "html")  
+```
+
+##### 2.95 Double check duplicates
+* __Purpose__: Double check if there are any duplications after 29 ensembl ids are filtered out.
+* __Result__: NO duplications any more!!! All ensembl ids are mapped to one and only one gene name
+```{r}
+removed_dup_gene_id <- (expr_filtered$GENEID[which(duplicated(expr_filtered$GENEID))])
+length(removed_dup_gene_id) # 0
+
+removed_dup_gene_name <- unique(expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
+length(removed_dup_gene_name) # 0 
+```
+
+### Step 3: Normalization
+
+#### 3.1 Before normalization: Box plot
+```{r}
+data2plot <- log2(cpm(expr_filtered[,4:27]))
+{boxplot(data2plot, 
+         xlab = "Samples", 
+         ylab = "log2 CPM", 
+         las = 2, 
+         cex = 0.5, 
+         cex.lab = 0.5,
+         cex.axis = 0.5, 
+         main = "RNASeq Samples before normalization") + 
+    
+abline(h = median(apply(data2plot, 2, median)), col = "green", lwd = 0.6, lty = "dashed")}
+```
+
+
+#### 3.2 Before normalization: Density plot
+```{r}
+counts_density <- apply(log2(cpm(expr_filtered[,4:27])), 2, density)
+  #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x)); 
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+         ylab="Smoothing density of log2-CPM", main="Density distribution before normalization", cex.lab = 0.85)
+    #plot each line
+    for (i in 1:length(counts_density)) lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),  
+           col=cols, lty=ltys, cex=0.75, 
+           border ="blue",  text.col = "green4", 
+           merge = TRUE, bg = "gray90")
+```
+#### 3.3 MA plot
+* __Purpose__: have a brief overview how the expression is different in the two groups.
+* __Result__: A huge difference can be observed.
+* __Background info__: For a particular gene, a log2 fold change of 1 means that the treatment induces a change in observed expression level of 2^1 = 2 compared to the control condition.
+Reference: http://www.nathalievialaneix.eu/doc/pdf/tutorial-rnaseq.pdf
+```{r}
+# overview for an experiment with a two-group comparison
+# each gene = a dot
+{limma::plotMA(log2(expr[,c(2, 14)]), ylab="M - ratio log expression", main="Primary tumour and tumorsphere example") +
+abline(h = c(-5, 0, 5), col = "blue")}
+```
+#### 3.4 Apply normalization on expr_filtered
+* __Method__: TMM
+* __Reason__: since the experiment was perform using RNA-seq, TMM normalization is perferred over quantile normalization method [Reference: https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-018-2246-7]. While RPKM, FPKM are proved to be inadequate and biased [http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=PubMed&dopt=Abstract&list_uids=22872506]. 
+```{r}
+# need a matrix with only values
+filtered_data_matrix <- as.matrix(expr_filtered[,4:27])
+
+# Rownames be the ensembl id
+rownames(filtered_data_matrix) <- expr_filtered$ensembl_id
+
+# DEGList object
+d <- DGEList(counts=filtered_data_matrix, group=samples$cell_type)
+
+# Normalization
+d <- calcNormFactors(d)
+
+# Inspect the normalization factor
+d$samples[1:5, ]
+
+# get normalized counts
+normalized_counts <- cpm(d)
+
+rownames(normalized_counts) <- expr_filtered$SYMBOL
+nrow(normalized_counts)
+# HUGO symbols as rownames of the dataframe
+kable(normalized_counts[1:5,1:5], format = "html")
+# All rows have a unique HUGO symbols, 
+sum(duplicated(rownames(normalized_counts))) # 0
+```
+
+#### 3.5 After normalization: (1) box plot
+* __Result__: improved a lot compared to the previous box plot
+```{r}
+# After normalization
+data2plot_after <- log2(normalized_counts)
+normalized_counts <- data.frame(normalized_counts)
+normalized_counts[,1]
+{boxplot(data2plot_after, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 0.5,
+        cex.axis = 0.5, main = "RNASeq Samples after normalization")
+abline(h = median(apply(data2plot_after, 2, median)), col = "green", lwd = 0.6, lty = "dashed")}
+```
+```{r}
+# remove outliers
+normalized_counts
+```
+
+#### 3.6 After normalization: (2) Density plot
+* __Result__: showed TMM normalization method worked
+```{r}
+counts_density <- apply(log2(normalized_counts), 2, density)
+  #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x)); 
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+         ylab="Smoothing density of log2-CPM",cex.lab = 0.85, 
+         main = "Density distribution after normalization")
+    #plot each line
+    for (i in 1:length(counts_density)) lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),  
+           col=cols, lty=ltys, cex=0.75, 
+           border ="blue",  text.col = "green4", 
+           merge = TRUE, bg = "gray90")
+```
+
+#### 3.7 MDS plot afte normalization
+* __Purpose__: inspect the distances between samples
+* __Result__: the samples are grouped together based on their cell type
+```{r}
+plotMDS(d, labels=rownames(samples),
+  col = c("darkgreen","blue")[factor(samples$cell_type)])
+```
+#### 3.8 Estimate common and tagwise dispersion
+* __Purpose__: Inspect variance
+* __Background info__: 
+  * Common dispersion -> common dispersion value for all genes
+  * Tagwise method -> gene-specific dispersions.
+  * Mean-Variance plot: how the dispersion we calculated infuence the data?
+* __Result__: The biological coefficient of variation is slightly below one for the common dispersion and the black dots are the tagwise dispersion for each gene.
+```{r}
+model_design <- model.matrix(~samples$patients + samples$cell_type+0)
+d <- estimateDisp(d, model_design)
+
+# Common and Tagwise, gene-specific dispersions
+plotBCV(d,col.tagwise = "black",col.common = "red")
+```
+#### 3.9 Mean-Variance relationship plot
+```{r}
+# mean-variance relationship
+plotMeanVar(d, show.raw.vars = TRUE,                # GREY: raw (pooled) genewise variances
+            show.tagwise.vars=TRUE,                 # BLUE: the estimated genewise variances
+            show.ave.raw.vars = TRUE,               # RED: average of the raw variances against average                                                      #      expression level
+            NBline=TRUE,                            # BLUE LINE: mean-variance relationship with common dispersion
+            show.binned.common.disp.vars = TRUE)    # common dispersion for each bin of genes and show the variances computed from those binned common dispersions and the mean expression level of the respective bin of genes
+```
+### Step 4: Interpret, and document
+* __Questions__
+  * *What are the control and test conditions of the dataset?*
+    * The control is the primary tumour samples, and the test conditions are the tumoursphere ones. 
+  * *Why is the dataset of interest to you?*
+    * The experiment concluded that they found a diagnostic biomarker that could detect breast cancer by inspecting the differentially expressed genes from bulk tumours and tumourspheres.
+  * *Were there expression values that were not unique for specific genes? How did you handle these?*
+    * In my case, multiple ensembl ids are mapped to the same gene symbol. The workflow I cited sugguested to map back to ensembl ids and find the highest expression ensembl id as the unique id that can map to the gene name.
+  * *Were there expression values that could not be mapped to current HUGO symbols?*
+    * Yes. Because there is a "R" instead of "0". The database does not include these names even though they are the same, but on the Y chromosome. I proved that this is the case by replacing R with 0 and map them to gene names again. Merge the newly mapped dataframe with the previously mapped (includes these unmapped genes), detected expected number of duplication in the merged dataframe. 
+  * *How many outliers were removed?*
+    * Did not remove any sample outliers. I plotted the MDS, it shows that all my samples cluster according to tissue types.
+    * Removed many genes with low counts: 37395. The threshold I set was genes with greater than 1 is considered to be expressed in that sample. It is considered as expressed if it has >1 count in at least three samples.
+    * Another reason I removed them was because I looked into the normalized count file the series provides. They have around 20000 genes, which is close to the post-filteration of this raw count data file. 
+  * *How did you handle replicates?*
+    * There are 24 replicates in total. I grouped the replicates by cell type: 12 control -- primary tumour and 12 experimental -- tumorsphere. There are 12 patients. Each of them has a control and a experimental sample. The final sample grouped has two columns, patient and cell type.
+  * *What is the final coverage of your dataset?*
+    * The dataset now covers 19815 genes (24 samples) after filteration and normalization.
