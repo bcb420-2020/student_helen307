@@ -22,9 +22,6 @@ if (! requireNamespace("edgeR", quietly = TRUE)) {
 if (! requireNamespace("knitr", quietly = TRUE)) {
   BiocManager::install("knitr")
 }
-if (! requireNamespace("kableExtra", quietly = TRUE)) {
-  BiocManager::install("kableExtra")
-}
 if (! requireNamespace("biomaRt", quietly = TRUE)) {
   BiocManager::install("biomaRt")
 }
@@ -40,7 +37,6 @@ if (! requireNamespace("limma", quietly = TRUE)) {
 # ======= LOAD LIBRARYS =======
 library(edgeR)
 library(knitr)
-library(kableExtra)
 library(GEOquery)
 library(biomaRt)
 library(EnsDb.Hsapiens.v75)
@@ -103,7 +99,8 @@ kable(samples, format = "html")
 
 * __Result__: no duplicated ensembl ids
 ```{r}
-(expr_dup <- length(expr[which(duplicated(expr[,1]))]))
+summarized_gene_counts_filtered <- sort(table(expr[,1]),decreasing = TRUE)
+length(summarized_gene_counts_filtered[which(summarized_gene_counts_filtered>1)]) # 0
 ```
 
 #### 2.3: get rid of low counts
@@ -132,8 +129,9 @@ dim(expr_filtered)  # 19873
 
 * __Purpose__: map expr_filtered ensembl ids to HUGO gene symbol.
 * The paper specified their usage of hg19, which is equivalent to GRCh37. [Reference: https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.13/]
-  * __Result__: 700 genes are not mapped
-  * __Solution__: used EnsDb.Hsapiens.v75 which is related to GRCh37. [Reference: https://genomicsclass.github.io/book/pages/bioc1_annoCheat.html]
+  * __Result__: around 800 genes are not mapped which is over 3%.
+  * __Solution__: used EnsDb.Hsapiens.v75 which is related to GRCh37. 
+  [Reference: https://genomicsclass.github.io/book/pages/bioc1_annoCheat.html]
 It results a higher coverage than grch37: only 17 unmapped genes
 
 ```{r}
@@ -214,7 +212,8 @@ nrow(test_filtered_bind) # 19873
 
 
 # check id duplication
-(num_dup_id <- length(test_filtered$GENEID[which(duplicated(test_filtered$GENEID))])) # 17 duplicated
+summarized_gene_counts <- sort(table(test_filtered_bind$GENEID),decreasing = TRUE)
+length(summarized_gene_counts[which(summarized_gene_counts>1)]) # 17
 # PROVED: the 17 should not be considered at all.
 
 # Therefore, delete the rows that contains the 17 duplicates
@@ -233,12 +232,10 @@ all(EnsDb_trans_ensembl$SYMBOL == expr_filtered$SYMBOL) # TRUE
 #### 2.8: Gene name duplication
 
 * __Purpose__: Check whether several ensembl ids are mapped to the same gene name.
-* __Result__: 12 distinct symbols (41 in total) corresponds to 41 ensembl ids. 
+* __Result__: 12 distinct symbols
 ```{r}
-dup_gene_name <- (expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
-length(dup_gene_name) # 41
-final_dup_gene_name <- unique(expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
-length(final_dup_gene_name) # 12
+dup_gene_name <- sort(table(expr_filtered$SYMBOL),decreasing = TRUE)
+length(dup_gene_name[which(dup_gene_name>1)]) # 12
 ```
 #### 2.9: Deal with duplicated name 
 
@@ -252,6 +249,7 @@ length(final_dup_gene_name) # 12
   4. Check duplication again
   [Reference: https://www.researchgate.net/post/How_to_deal_with_multiple_ensemble_IDs_mapping_to_one_gene_symbol_in_a_RNA-Seq_dataset]
 
+## 2.91-2.94: If want to remove the 41 rows that contains duplicated gene names! It is okay not to run these because they are < 3%!
 ##### 2.91 Calculate expression for all ids
 * __Purpose__: To create another column that contains the total expression for each gene across all samples.
 * __Result__: expr_filtered now has a column with calculated values
@@ -281,7 +279,6 @@ for (i in 1:length(final_dup_gene_name)){
 }
 length(f) # 53 ensembl ids are associated, we only need 12/53
 ```
-
 ##### 2.93 Find the matched ensembl ids with the highest expression value
 * __Purpose__: title
 * __Result__: find the 12 ensembl ids we are going to keep.
@@ -316,18 +313,18 @@ nrow(test) # 19815
 expr_filtered <- test
 rownames(expr_filtered) <- 1:nrow(expr_filtered)
 nrow(expr_filtered) # 19815
-kable(expr_filtered[1:5, 1:5], format = "html")  
+kable(expr_filtered[1:5, 1:5], format = "html")
 ```
 
 ##### 2.95 Double check duplicates
 * __Purpose__: Double check if there are any duplications after 29 ensembl ids are filtered out.
 * __Result__: NO duplications any more!!! All ensembl ids are mapped to one and only one gene name
 ```{r}
-removed_dup_gene_id <- (expr_filtered$GENEID[which(duplicated(expr_filtered$GENEID))])
-length(removed_dup_gene_id) # 0
+sum_gene_counts <- sort(table(expr_filtered$GENEID),decreasing = TRUE)
+length(summarized_gene_counts[which(sum_gene_counts>1)]) # 0
 
-removed_dup_gene_name <- unique(expr_filtered$SYMBOL[which(duplicated(expr_filtered$SYMBOL))])
-length(removed_dup_gene_name) # 0 
+sum_gene_name <- sort(table(expr_filtered$SYMBOL),decreasing = TRUE)
+length(summarized_gene_counts[which(sum_gene_name>1)]) # 0
 ```
 
 ### Step 3: Normalization
@@ -335,16 +332,11 @@ length(removed_dup_gene_name) # 0
 #### 3.1 Before normalization: Box plot
 ```{r}
 data2plot <- log2(cpm(expr_filtered[,4:27]))
-{boxplot(data2plot, 
-         xlab = "Samples", 
-         ylab = "log2 CPM", 
-         las = 2, 
-         cex = 0.5, 
-         cex.lab = 0.5,
-         cex.axis = 0.5, 
-         main = "RNASeq Samples before normalization") + 
-    
-abline(h = median(apply(data2plot, 2, median)), col = "green", lwd = 0.6, lty = "dashed")}
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 0.5,
+        cex.axis = 0.5, main = "RNASeq Samples before normalization")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)), col = "green", lwd = 0.6, lty = "dashed")
 ```
 
 
@@ -416,20 +408,14 @@ sum(duplicated(rownames(normalized_counts))) # 0
 ```{r}
 # After normalization
 data2plot_after <- log2(normalized_counts)
-normalized_counts <- data.frame(normalized_counts)
-normalized_counts[,1]
 {boxplot(data2plot_after, xlab = "Samples", ylab = "log2 CPM", 
         las = 2, cex = 0.5, cex.lab = 0.5,
         cex.axis = 0.5, main = "RNASeq Samples after normalization")
 abline(h = median(apply(data2plot_after, 2, median)), col = "green", lwd = 0.6, lty = "dashed")}
 ```
-```{r}
-# remove outliers
-normalized_counts
-```
 
 #### 3.6 After normalization: (2) Density plot
-* __Result__: showed TMM normalization method worked
+* __Result__: showed TMM normalization method worked.
 ```{r}
 counts_density <- apply(log2(normalized_counts), 2, density)
   #calculate the limits across all the samples
@@ -483,6 +469,10 @@ plotMeanVar(d, show.raw.vars = TRUE,                # GREY: raw (pooled) genewis
             NBline=TRUE,                            # BLUE LINE: mean-variance relationship with common dispersion
             show.binned.common.disp.vars = TRUE)    # common dispersion for each bin of genes and show the variances computed from those binned common dispersions and the mean expression level of the respective bin of genes
 ```
+FINAL DATASET
+```{r}
+kable(normalized_counts[1:5,1:5], format = "html")
+```
 ### Step 4: Interpret, and document
 * __Questions__
   * *What are the control and test conditions of the dataset?*
@@ -490,7 +480,7 @@ plotMeanVar(d, show.raw.vars = TRUE,                # GREY: raw (pooled) genewis
   * *Why is the dataset of interest to you?*
     * The experiment concluded that they found a diagnostic biomarker that could detect breast cancer by inspecting the differentially expressed genes from bulk tumours and tumourspheres.
   * *Were there expression values that were not unique for specific genes? How did you handle these?*
-    * In my case, multiple ensembl ids are mapped to the same gene symbol. The workflow I cited sugguested to map back to ensembl ids and find the highest expression ensembl id as the unique id that can map to the gene name.
+    * In my case, multiple ensembl ids are mapped to the same HUGO gene symbol. The workflow I cited sugguested to map back to ensembl ids and find the highest expression ensembl id as the unique id that can map to the gene name. But since there are only 41 of them, Ruth sugguested not to exclude them out. **If the later analysis does not care about the duplicated gene names, then I would comment these code segments out**.
   * *Were there expression values that could not be mapped to current HUGO symbols?*
     * Yes. Because there is a "R" instead of "0". The database does not include these names even though they are the same, but on the Y chromosome. I proved that this is the case by replacing R with 0 and map them to gene names again. Merge the newly mapped dataframe with the previously mapped (includes these unmapped genes), detected expected number of duplication in the merged dataframe. 
   * *How many outliers were removed?*
@@ -500,4 +490,5 @@ plotMeanVar(d, show.raw.vars = TRUE,                # GREY: raw (pooled) genewis
   * *How did you handle replicates?*
     * There are 24 replicates in total. I grouped the replicates by cell type: 12 control -- primary tumour and 12 experimental -- tumorsphere. There are 12 patients. Each of them has a control and a experimental sample. The final sample grouped has two columns, patient and cell type.
   * *What is the final coverage of your dataset?*
-    * The dataset now covers 19815 genes (24 samples) after filteration and normalization.
+    * If want unique gene names, the dataset now covers 19815 genes (24 samples) after filteration and normalization.
+    * If does not care about the 41 duplicated gene names, then the dataset covers 19856 genes.
