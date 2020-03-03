@@ -1,15 +1,19 @@
 ---
 title: "R Notebook"
+author: "Yining Ding"
 output:
   html_document:
     df_print: paged
     toc: yes
     toc_depth: '3'
   html_notebook:
-    bibliography: A2.bib
     toc: yes
     toc_depth: 3
+bibliography: A2.bib
 ---
+
+
+
 # Introduction
 The objective of this second assignment is to explore the differentially expressed genes from the cleaned and normalized data in assignmnent one. Then rank the thresholded over-representation analysis to highlight the top terms / dominant themes in the top set of genes. Lastly, compare my result with the original literature and find some other supports as well for my result if possible. I make some changes to my assignment one and stored the file as "ammended_A1.Rmd" and imported it here. I will demonstrate briefly what I have changed and I general workflow in A1.
 
@@ -176,7 +180,7 @@ plotBCV(d,col.tagwise = "black",col.common = "red",
 
 ### STEP 7: Genes pass threshold and FDR correction 
 
-I used Quasi-likelihood models to fit my data and used QLFTest to test for differential expression. The Quasi-likelihood compares two conditions (primary tumour and tumoursphere) and shows the up and down-regulated genes. I have showed the result below that are sorted by p-value. I also inspected the number of genes that satisty my threshold and correction. I choose to use FDR correction based on the paper as well. There are 7467 genes pass the p-value = 0.05, and 5033 genes that pass the FDR correction.
+I used Quasi-likelihood models to fit my data and used QLFTest to test for differential expression. The Quasi-likelihood compares two conditions (primary tumour and tumoursphere) and shows the up and down-regulated genes. I have showed the result below that are sorted by p-value. I also inspected the number of genes that satisty my threshold and correction. I choose to use FDR correction based on the paper as well[@goh2017chromosome] . There are 7467 genes pass the p-value = 0.05, and 5033 genes that pass the FDR correction.
 ```{r threshold and correction, results = "hide"}
 fit <- glmQLFit(d, model_design)
 qlf.sphere_vs_tumour <- glmQLFTest(fit, coef='samples$cell_typeSphere')
@@ -196,7 +200,7 @@ length(which(qlf_output_hits$table$FDR < 0.05)) # 5033
 
 ### STEP 8: Up and down-regulated genes
 
-I determined the number of up-regulated genes by selecting every gene that does not pass my p-value: 0.05, and also have a positive log fold change. Down-regulated genes are selected in the same way with a negative log fold change. Stored these data for later enrichment analysis.
+I determined the number of up-regulated genes by selecting every gene that does not pass my p-value: 0.05, and also have a positive log fold change. Down-regulated genes are selected in the same way with a negative log fold change. Stored these data for later enrichment analysis. 
 
 ```{r up and down-regulated, results="hide"}
 # How many genes are up regulated?
@@ -238,7 +242,7 @@ write.table(x=downregulated_genes,
 
 ### STEP 9: Show up and down-regulated genes
 
-I have shown the up and down-regulated genes in a volcano plot by coloring them in red and blue, the code is from [an example analysis on tomato data](http://www.nathalievialaneix.eu/doc/html/solution_edgeR-tomato.html#volcano-plot)
+I have shown the up and down-regulated genes in a volcano plot by coloring them in red and blue, the code is from [@tomatodata2017]
 ```{r up_volcano}
 volcanoData <- cbind(qlf_output_hits$table$logFC, -log10(qlf_output_hits$table$FDR))
 colnames(volcanoData) <- c("logFC", "Pval")
@@ -423,7 +427,7 @@ upregulated_genes_sym[grep(pattern="ALDH",upregulated_genes_sym)]
 ```
 
 2. Evidence that support and how they support your results.
-* [Vassalli 2019](https://www.hindawi.com/journals/sci/2019/3904645/) considers ALDH family as a biomarker for breast cancer.
-* [Vasiliou 2005](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3525259/) convinces me that my result from g:profiler matches with the basal subtype. The paper states that mutations in ALDH genes causes metabolism errors, for example, Sjögren - Larsson syndrome, type II hyperprolinaemia and γ-hydroxybutyric aciduria and even cancer and Alzheimer's disease. 
+* [@vassalli2019aldehyde] considers ALDH family as a biomarker for breast cancer.
+* [@vasiliou2005analysis] convinces me that my result from g:profiler matches with the basal subtype. The paper states that mutations in ALDH genes causes metabolism errors, for example, Sjögren - Larsson syndrome, type II hyperprolinaemia and γ-hydroxybutyric aciduria and even cancer and Alzheimer's disease. 
 
 # References
