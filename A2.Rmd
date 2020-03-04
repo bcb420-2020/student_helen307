@@ -1,0 +1,451 @@
+---
+title: "R Notebook"
+author: "Yining Ding"
+output:
+  html_notebook:
+    toc: yes
+    toc_depth: 3
+bibliography: A2.bib
+---
+
+
+
+# Introduction
+The objective of this second assignment is to explore the differentially expressed genes from the cleaned and normalized data in assignmnent one. Then rank the thresholded over-representation analysis to highlight the top terms / dominant themes in the top set of genes. Lastly, compare my result with the original literature and find some other supports as well for my result if possible. I make some changes to my assignment one and stored the file as "ammended_A1.Rmd" and imported it here. I will demonstrate briefly what I have changed in general workflow in A1. My summary of the paper can be found at [my journal](https://github.com/bcb420-2020/student_helen307/wiki/a1) or in A1.
+
+[@limma]
+[@Robinson:2010:Bioinformatics:19910308]
+[@EnsDb.Hsapiens.v75]
+[@knitr]
+[@heatmap]
+[@circlize]
+[@gprofiler2]
+```{r setup, results="hide", include = FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+if (!requireNamespace("limma", quietly = TRUE))
+    BiocManager::install("limma")
+
+if (!requireNamespace("ComplexHeatmap", quietly = TRUE))
+    BiocManager::install("ComplexHeatmap")
+
+if (!requireNamespace("edgeR", quietly = TRUE))
+    BiocManager::install("edgeR")
+
+if (!requireNamespace("EnsDb.Hsapiens.v75", quietly = TRUE))
+    BiocManager::install("EnsDb.Hsapiens.v75")
+
+if (!requireNamespace("knitr", quietly = TRUE))
+    BiocManager::install("knitr")
+if (!requireNamespace("gprofiler2", quietly = TRUE))
+    BiocManager::install("gprofiler2")
+
+library(limma)
+library(edgeR)
+library(EnsDb.Hsapiens.v75)
+library(knitr)
+library(ComplexHeatmap)
+library(circlize)
+library(gprofiler2)
+
+```
+
+```{r child='ammended_A1.Rmd', include=FALSE, eval=TRUE}
+```
+# A2
+## Load data
+Loaded my normalized data from A1.
+```{r load norm data}
+normalized_count_data <- read.table(file="GSE84054_normalized_count.txt")
+kable(normalized_count_data[1:5, 1:5], type="html")
+```
+## Explore: Normalized 
+
+We need to explore the data again after normalization to ensure the normalized data reaches our expectations.
+1. boxplot - normalized
+```{r boxplot_normalized, warning=FALSE}
+# After normalization
+data2plot_after <- log2(normalized_count_data[,3:ncol(normalized_count_data)])
+{boxplot(data2plot_after, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 0.5,
+        cex.axis = 0.5, main = "Filtered and normalized RNASeq Samples")
+abline(h = median(apply(data2plot_after, 2, median)), col = "green", lwd = 0.6, lty = "dashed")}
+```
+
+2. density plot - normalized
+```{r density_normalized}
+counts_density <- apply(log2(normalized_count_data[,3:ncol(normalized_count_data)]), 2, density)
+  #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x)); 
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+         ylab="Smoothing density of log2-CPM",cex.lab = 0.85, 
+         main = "Filtered and normalized RNASeq Samples distribution")
+    #plot each line
+    for (i in 1:length(counts_density)) lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    legend("topright", colnames(data2plot), col=cols, lty=ltys, cex=0.75, 
+           border ="blue",  text.col = "green4", merge = TRUE, bg = "gray90")
+```
+
+## PART #1: differential expression 
+1. Calculate p-values for each of the genes in your expression set. How many genes were significantly differentially expressed? What thresholds did you use and why?
+* There are 7464 genes that are below the p-value. The threshold I used is 0.05 because this is what the authors of the paper sugguested that they use.
+2. Multiple hypothesis testing - correct your p-values using a multiple hypothesis correction method. Which method did you use? And Why? How many genes passed correction?
+* I used FDR correction which is also what the authors of the paper specified. 5033 genes passed the correction. Both the p-value and the correction data are based on the edgeR package, not the limma package. I used the limma package up till the point of calculating differential expression like what is sugguested on the lecture notes.
+3. Show the amount of differentially expressed genes using an MA Plot or a Volcano plot. Highlight genes of interest.
+* I showed a volcano plot using my edgeR fitted data and highlighed the upregulated to be red and down regulated to be blue.
+4. Visualize your top hits using a heatmap. Do you conditions cluster together? Explain why or why not.
+* My data clustered perfectly according to their cell types which is what my model design based on. My interpretation for the graph would be that since the colors are opposite to each other in the two different cell types, it means that the genes that are upregulated in tumoursphere would be down regulated in primary tumour samples. The shows a great results that the upregulated genes can be potential biomarkers to track if tumoursphere is present or not.
+
+### STEP 1: Choice of factors in my model
+* I created the MDS by both using "cell_type" and "cell_type" and "patient". The comparison between the two models is fairly clear: we should only depend on the factor "cell_type", since there seems to be no correlation with each patient.
+
+```{r MDS-1} 
+heatmap_matrix <- normalized_count_data[,3:ncol(normalized_count_data)]
+rownames(heatmap_matrix) <- normalized_count_data$GENEID
+colnames(heatmap_matrix) <- rownames(samples_filtered)
+
+# MDS plot by "cell_type" in samples
+plotMDS(heatmap_matrix, labels=rownames(samples_filtered), 
+        col = c("darkgreen","blue")[factor(samples_filtered$cell_type)],
+        main = "MDS plot depending on cell type")
+```
+
+
+```{r MDS-2} 
+pat_colors <- rainbow(12)
+pat_colors <- unlist(lapply(pat_colors,FUN=function(x){rep(x,2)}))
+# MDS plot by "cell_type" + "patients"in samples
+plotMDS(heatmap_matrix, col = pat_colors,
+        main = "MDS plot depending on both cell type and patients")
+```
+
+### STEP 2: Define my model design
+Based on the two models in part1, I decide to base my model only on "cell_type"
+```{r model} 
+model_design <- model.matrix(~ samples$cell_type)
+kable(model_design, type="html")
+```
+
+### STEP 3: Calculate p-value
+There are 6988 genes that pass the p-value = 0.05 which is chosen based on the paper.
+```{r p-val, results="hide"}
+expressionMatrix <- as.matrix(normalized_count_data[,3:ncol(normalized_count_data)])
+rownames(expressionMatrix) <- normalized_count_data$GENEID
+colnames(expressionMatrix) <- colnames(normalized_count_data)[3:ncol(normalized_count_data)]
+minimalSet <- ExpressionSet(assayData=expressionMatrix)
+
+# fit
+fit <- lmFit(minimalSet, model_design)
+
+# Use Bayes
+fit2 <- eBayes(fit,trend=TRUE)
+
+# Correction: BH (recommended by the paper)
+topfit <- topTable(fit2, coef=ncol(model_design),
+                   adjust.method = "BH",
+                   number = nrow(expressionMatrix))
+
+# merge gene symbol to topfit table
+output_hits <- merge(normalized_count_data[,1:2], topfit, by.y = 0, by.x = 1, all.y=TRUE)
+
+#sorted by P-value
+output_hits <- output_hits[order(output_hits$P.Value),]
+kable(output_hits[1:5,],type="html")
+
+# number of genes that pass threshold p-value = 0.05
+length(which(output_hits$P.Value < 0.05)) # 6988
+
+# number of genes that pass correction
+length(which(output_hits$adj.P.Val < 0.05)) # 4062
+```
+
+### STEP 4: Set up EdgeR object
+
+```{r d object}
+d = DGEList(counts=filtered_data_matrix, group=samples$cell_type)
+d <- estimateDisp(d, model_design_pat)
+```
+
+### STEP 5: Test whether my data is suitable for edgeR - MeanVar plot
+I have shown that my data is suitable for using edgeR for further analysis. The data follows the binomial distribution.
+```{r meanvar}
+plotMeanVar(d, show.raw.vars = TRUE,                
+            show.tagwise.vars=TRUE,                 
+            show.ave.raw.vars = TRUE,                                                         
+            NBline=TRUE,
+            show.binned.common.disp.vars = TRUE,
+            main = "Binomial distribution of my data")
+```
+
+### STEP 6: Estimate dispersion - BCV plot
+The individual dots represent each gene and the blue line is the overall trend line.
+```{r BCV}
+plotBCV(d,col.tagwise = "black",col.common = "red", 
+        main = "BCV plot of RNA-seq data")
+```
+
+### STEP 7: Genes pass threshold and FDR correction 
+
+I used Quasi-likelihood models to fit my data and used QLFTest to test for differential expression. The Quasi-likelihood compares two conditions (primary tumour and tumoursphere) and shows the up and down-regulated genes. The result below that are sorted by p-value. I also inspected the number of genes that satisty my threshold and correction. I choose to use FDR correction based on the paper as well[@goh2017chromosome] . There are 7467 genes pass the p-value = 0.05, and 5033 genes that pass the FDR correction.
+```{r threshold and correction, results = "hide"}
+fit <- glmQLFit(d, model_design)
+qlf.sphere_vs_tumour <- glmQLFTest(fit, coef='samples$cell_typeSphere')
+kable(topTags(qlf.sphere_vs_tumour), type="html")
+
+# Get all the results
+qlf_output_hits <- topTags(qlf.sphere_vs_tumour, 
+                           sort.by = "PValue", 
+                           n = nrow(normalized_count_data))
+
+# Number of genes that pass the threshold p-value = 0.05
+length(which(qlf_output_hits$table$PValue < 0.05)) # 7467
+
+# Number of genes that pass correction
+length(which(qlf_output_hits$table$FDR < 0.05)) # 5033
+```
+
+### STEP 8: Up and down-regulated genes
+
+I determined the number of up-regulated genes by selecting every gene that does not pass my p-value: 0.05, and also have a positive log fold change. Down-regulated genes are selected in the same way with a negative log fold change. Stored these data for later enrichment analysis on gProfileR. 
+
+```{r up and down-regulated, results="hide"}
+# number of genes that are up regulated
+length(which(qlf_output_hits$table$PValue < 0.05 
+             & qlf_output_hits$table$logFC > 0)) # 1897
+
+# number of genes that are down regulated
+length(which(qlf_output_hits$table$PValue < 0.05  
+             & qlf_output_hits$table$logFC < 0)) # 5570
+
+# Get those up and down-regulated genes
+qlf_output_hits_withgn <- merge(expr_filtered[,1:2],qlf_output_hits, by.x=1, by.y = 0)
+
+upregulated_genes <- qlf_output_hits_withgn$GENEID[which(qlf_output_hits$table$PValue < 0.05 
+                                                         & qlf_output_hits$table$logFC > 0)]
+
+downregulated_genes <-qlf_output_hits_withgn$GENEID[which(qlf_output_hits$table$PValue < 0.05 
+                                                           & qlf_output_hits$table$logFC < 0)]
+
+
+# store data - all differentially expressed
+unreg_genes_copy <- data.frame(upregulated_genes)
+downreg_genes_copy <- data.frame(downregulated_genes)
+names(unreg_genes_copy) <- names(downreg_genes_copy)
+all_de <- rbind(unreg_genes_copy, downreg_genes_copy)
+colnames(all_de) <- "all_de"
+write.table(x=all_de,
+            file="all_expr_de_genes.txt",sep = "\t",
+            row.names = FALSE,col.names = FALSE,quote = FALSE)
+
+# up regulated
+write.table(x=upregulated_genes,
+            file="expr_upregulated_genes.txt",sep = "\t",
+            row.names = FALSE,col.names = FALSE,quote = FALSE)
+
+# down regulated
+write.table(x=downregulated_genes,
+            file="expr_downregulated_genes.txt",sep = "\t",
+            row.names = FALSE,col.names = FALSE,quote = FALSE)
+```
+
+### STEP 9: Show up and down-regulated genes
+
+I have shown the up and down-regulated genes in a volcano plot by coloring them in red and blue, the code is from [@tomatodata2017]
+```{r up_volcano}
+volcanoData <- cbind(qlf_output_hits$table$logFC, -log10(qlf_output_hits$table$FDR))
+colnames(volcanoData) <- c("logFC", "Pval")
+
+up <- qlf_output_hits$table$FDR < 0.05 & qlf_output_hits$table$logFC > 0
+point.col <- ifelse(up, "red", "black")
+plot(volcanoData, pch = 16, col = point.col, cex = 0.5,
+     main = "Up-regulated genes in RNA-seq data")
+```
+
+```{r down_volcano}
+down <- qlf_output_hits$table$FDR < 0.05 & qlf_output_hits$table$logFC < 0
+point.col <- ifelse(down, "blue", "black")
+plot(volcanoData, pch = 16, col = point.col, cex = 0.5,
+      main = "Down-regulated genes in RNA-seq data")
+```
+
+
+### STEP 10: Test Differential expression - heatmap
+
+To test the differential expression, I used the heatmap and it has shown a clear distinction between up and down regulated genes. There is a clear difference between the primary tumour samples and tumoursphere samples.(They are reversed.) The clustering is very obvious to show that differential expression exists.
+
+```{r heatmap}
+top_hits <- rownames(qlf_output_hits$table)[output_hits$P.Value<0.05] 
+heatmap_matrix_tophits <- t(scale(t(heatmap_matrix[which(rownames(heatmap_matrix) %in% top_hits),]))) 
+heatmap_matrix_tophits <- heatmap_matrix_tophits[, c(grep(colnames(heatmap_matrix_tophits),pattern = "_P"), 
+                                                    grep(colnames(heatmap_matrix_tophits),pattern = "_S"))]
+
+if(min(heatmap_matrix_tophits) == 0){
+    heatmap_col = colorRamp2(c( 0, max(heatmap_matrix_tophits)), 
+                             c( "white", "red"))
+    } else {
+    heatmap_col = colorRamp2(c(min(heatmap_matrix_tophits), 0, max(heatmap_matrix_tophits)), c("blue", "white", "red"))
+    }
+
+current_heatmap <- Heatmap(as.matrix(heatmap_matrix_tophits),
+                           cluster_rows = TRUE,
+                           cluster_columns = FALSE,
+                               show_row_dend = TRUE,
+                               show_column_dend = FALSE,
+                               col=heatmap_col,
+                               show_column_names = TRUE, 
+                               show_row_names = FALSE,
+                               show_heatmap_legend = TRUE,)
+current_heatmap
+```
+
+## PART 2: Thresholded over-representation analysis
+### Introduction to PART 2:
+1. *Which method did you choose and why?*
+* I chose to use g:profiler because it shows me the top term names in KEGG, WP, GO and REAC, which is helpful for me when deciding what type of disease it is most likely to be.
+2. *What annotation data did you use and why? What version of the annotation are you using?*
+* GO biological process:  releases/2019-07-01
+* KEGG: KEGG FTP Release 2019-09-30
+* Reactome: ensembl classes: 2019-10-2
+* WikiPathways: 20190910
+3. *How many genesets were returned with what thresholds?*
+* The threshold for all the queries: 0.05
+* 821 gene sets are returned for all the differentially expressed genes.
+* 60 gene sets are returned for up-regulated genes.
+* 1333 gene sets are returned for down-regulated genes.
+
+4. Run the analysis using the up-regulated set of genes, and the down-regulated set of genes separately. How do these results compare to using the whole list (i.e all differentially expressed genes together vs. the up-regulated and down regulated differentially expressed genes separately)?
+* The up-regulated gene sets are mostly cellular processes and metabolic processes.
+* The top terms for down-regulated gene sets are mostly signaling pathways and metabolic processes/
+* When running with both up and down-regulated genes, I found that most of them are dominated by the metabolic and cellular processes (up regulated top terms). Therefore, it convinces me the importance of the up-regulated genes in the cancer. And the result aligns with the paper that states the cancer is of subtype "basal".
+* Below are my results for each up-regulated, down-regulated, and differentially expressed (both).
+
+### Up regulated genes
+There were no REAC found. I used the gprofiler2's function to query data and also attached the screenshots that I took on their website since the package does not show the number of gene sets each has found. 
+```{r echo=FALSE}
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/all_up.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/KEGG_up.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/WP_up.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/GO_up.png")
+
+gpro_upregulated <- gprofiler2::gost(upregulated_genes, 
+                                  organism = "hsapiens", 
+                                  ordered_query = FALSE,
+                                  multi_query = FALSE, 
+                                  significant = TRUE, 
+                                  exclude_iea = FALSE,
+                                  measure_underrepresentation = FALSE, 
+                                  evcodes = FALSE,
+                                  user_threshold = 0.05, 
+                                  correction_method = c("fdr"),
+                                  domain_scope = c("annotated", "known", "custom", "custom_annotated"),
+                                  custom_bg = NULL, 
+                                  numeric_ns = "", 
+                                  sources = c("GO:BP", "KEGG", "REAC", "WP"),
+                                  as_short_link = FALSE)
+
+gprofiler2::gostplot(gpro_upregulated, 
+                     capped = TRUE, 
+                     interactive = TRUE, 
+                     pal = c(`GO:BP` = "#ff9900", 
+                             KEGG = "#dd4477",
+                             REAC = "#3366cc", 
+                             WP = "#0099c6"))
+```
+
+### Down regulated genes
+
+The some analysis is apply to down regulated
+```{r echo=FALSE}
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/all_down.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/KEGG_down.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/WP_down.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/GO_down.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/REAC_down.png")
+
+gpro_downregulated <- gprofiler2::gost(downregulated_genes, 
+                                  organism = "hsapiens", 
+                                  ordered_query = FALSE,
+                                  multi_query = FALSE, 
+                                  significant = TRUE, 
+                                  exclude_iea = FALSE,
+                                  measure_underrepresentation = FALSE, 
+                                  evcodes = FALSE,
+                                  user_threshold = 0.05, 
+                                  correction_method = c("fdr"),
+                                  domain_scope = c("annotated", "known", "custom", "custom_annotated"),
+                                  custom_bg = NULL, 
+                                  numeric_ns = "", 
+                                  sources = c("GO:BP", "KEGG", "REAC", "WP"),
+                                  as_short_link = FALSE)
+gprofiler2::gostplot(gpro_downregulated, 
+                     capped = TRUE, 
+                     interactive = TRUE, 
+                     pal = c(`GO:BP` = "#ff9900", 
+                             KEGG = "#dd4477",
+                             REAC = "#3366cc", 
+                             WP = "#0099c6"))
+```
+
+### All differentially expressed genes
+```{r echo=FALSE}
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/all_DE.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/KEGG_DE.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/WP_DE.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/GO_DE.png")
+knitr::include_graphics("/Users/helending/Documents/BCB420/pics/REAC_DE.png")
+all_de <- read.table("all_expr_de_genes.txt")
+gpro_all_de <- gprofiler2::gost(all_de[,1],
+                                  organism = "hsapiens", 
+                                  ordered_query = FALSE,
+                                  multi_query = FALSE, 
+                                  significant = TRUE, 
+                                  exclude_iea = FALSE,
+                                  measure_underrepresentation = FALSE, 
+                                  evcodes = FALSE,
+                                  user_threshold = 0.05, 
+                                  correction_method = c("fdr"),
+                                  domain_scope = c("annotated", "known", "custom", "custom_annotated"),
+                                  custom_bg = NULL, 
+                                  numeric_ns = "", 
+                                  sources = c("GO:BP", "KEGG", "REAC", "WP"),
+                                  as_short_link = FALSE)
+gprofiler2::gostplot(gpro_all_de, 
+                     capped = TRUE, 
+                     interactive = TRUE, 
+                     pal = c(`GO:BP` = "#ff9900", 
+                             KEGG = "#dd4477",
+                             REAC = "#3366cc", 
+                             WP = "#0099c6"))
+```
+
+# Interpretation questions
+1. Do the over-representation results support conclusions or mechanism discussed in the original paper?
+* The paper found 1401 genes being up-regulated with fold change > 2 and FDR < 0.05. I found 1312 which is roughly similar. They also found that ALDH family is up-regulated as well. But I found 3 of them in my upregulated genes. The disease is indicated as 31% of basal-like tumors, 12% (HER2)+ tumors and 10% of luminal tumors, since the top terms of my upregulated genes are metabolic processes, therefore, the result aligns with the paper.
+* The paper did not mention about the down-regulated genes.
+```{r interpretatin questions, results="hide"}
+upregulated_genes_sym <- qlf_output_hits_withgn$SYMBOL[which(qlf_output_hits$table$PValue < 0.05 
+                                                         & qlf_output_hits$table$logFC > 1)]
+
+length(upregulated_genes_sym) # 1312
+
+
+upregulated_genes_sym[grep(pattern="ALDH",upregulated_genes_sym)]
+# ALDH2, ALDH8A1, ALDH1L2 -> confirmed!
+```
+
+2. Evidence that support and how they support your results.
+
+* My result #1: ALDH family is found in my up regulated genes.
+Verification of over-representation of ALDH is an important family in breast cancer by [@vassalli2019aldehyde]. They consider ALDH family as a biomarker for breast cancer which sugguests that my result (the fact that up-regulated genes contains the ALDH family is verified). 
+* My result #2: top terms of the upregulated genes are mostly cellular and metabolic processes.
+[@vasiliou2005analysis] convinces me that my result from g:profiler matches with the basal subtype. The paper states that mutations in ALDH genes causes metabolism errors, for example, Sjögren - Larsson syndrome, type II hyperprolinaemia and γ-hydroxybutyric aciduria and even cancer and Alzheimer's disease. 
+
+# References
