@@ -14,8 +14,6 @@ bibliography: A2.bib
 # Objective of A3
 The objective of this third assignment is to use the ranked file from A2 and perform non-thresholded analysis with GSEA (Version 4.0.3) [@GSA]. Then the result is compared to the result from thresholded analysis in A2. Finally, cytoscape (Version 3.7.2, Java 1.8.0_162 by Oracle Corporation)[@lopes2010cytoscape] is used to help to create a visualization of the up and down regulated genes along with annotations from the Bader lab. Post analysis is performed with drugBank datasets from Bader lab as well. Other details such as performing the analysis of cytoscape can be retrieved from [my Journal](https://github.com/bcb420-2020/student_helen307/wiki/a3)
 
-# A1 and A2 
-Work from A1 and A2 are embedded in this notebook. In A1, we performed data cleaning, normalization and general analysis with density and box plots. In A2, we explored the differentially expressed genes and ranked them with thresholded analysis to highlight the top terms. And also found some evidence that supported my work from some other papers. Other details from A1 and A2 can also be found in my journal.
 
 
 ```{r child='A2.Rmd', include=FALSE, eval=TRUE, echo=FALSE, results='hide'}
@@ -29,7 +27,6 @@ R Libraries used:
 * knitr[@knitr]
 * kableExtra[@kableExtra]
 * GSA[@GSA]
-* 
 
 ```{r, include=FALSE}
 
@@ -107,7 +104,7 @@ My data is divided into "POS" and "NEG" which correspond to up-regulatedand down
   * The top gene associated with this geneset is IGKV2D-28. 
 
 ```{r, echo=FALSE}
-pos <- read.delim("/Users/helending/Documents/bcb420/A3_part1_non_thres.GseaPreranked.1584469398976/gsea_report_for_na_pos_1584469398976.xls")
+pos <- read.delim("/Users/helending/Documents/bcb420/gsea_result/gsea_report_for_na_pos_1584469398976.xls")
 kable(head(neg[,c(1, 4, 5, 6, 7, 8, 9, 10, 11)]), caption = "Down-regulated_top_terms", format="html") %>%
   kable_styling(bootstrap_options = "hover")
 ```
@@ -119,7 +116,7 @@ kable(head(neg[,c(1, 4, 5, 6, 7, 8, 9, 10, 11)]), caption = "Down-regulated_top_
   * The top gene associated with is PRKCB.
 
 ```{r, echo=FALSE}
-neg <- read.delim("/Users/helending/Documents/bcb420/A3_part1_non_thres.GseaPreranked.1584469398976/gsea_report_for_na_neg_1584469398976.xls")
+neg <- read.delim("/Users/helending/Documents/bcb420/gsea_result/gsea_report_for_na_neg_1584469398976.xls")
 kable(head(neg[,c(1, 4, 5, 6, 7, 8, 9, 10, 11)]), caption = "Down-regulated_top_terms", format="html") %>%
   kable_styling(bootstrap_options = "hover")
 ```

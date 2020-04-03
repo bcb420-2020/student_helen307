@@ -1,0 +1,278 @@
+---
+title: "R Notebook"
+author: "Yining Ding (1003898446)"
+output:
+  html_notebook:
+    toc: yes
+---
+# A1
+My data is from GSE84054 [@goh2017chromosome]
+
+What I have changed in A1: I decided to leave the genes that have duplicated names because Ruth sugguested that they are a very small number compare to my total number of genes, ~1%. So I deleted many steps in A1, and made the cleaning step clearer by showing boxplots, density plots and MDS plots in each cleaning step.
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+if (!requireNamespace("limma", quietly = TRUE))
+    BiocManager::install("limma")
+
+
+if (!requireNamespace("edgeR", quietly = TRUE))
+    BiocManager::install("edgeR")
+
+if (!requireNamespace("EnsDb.Hsapiens.v75", quietly = TRUE))
+    BiocManager::install("EnsDb.Hsapiens.v75")
+
+if (!requireNamespace("knitr", quietly = TRUE))
+    BiocManager::install("knitr")
+if (!requireNamespace("GEOquery", quietly = TRUE))
+    BiocManager::install("GEOquery")
+library(limma)
+library(edgeR)
+library(EnsDb.Hsapiens.v75)
+library(knitr)
+library(GEOquery)
+```
+
+## Download data
+```{r download data, results="hide"}
+# Download dataset
+datafile <- "GSE84054_Rawcount_12patientER.txt.gz"
+if (!file.exists(datafile)) {
+    datafile <- GEOquery::getGEOSuppFiles('GSE84054', makeDirectory = FALSE)
+}
+expr <- read.delim(datafile,header=TRUE,check.names=FALSE)
+(fnames <- rownames(sfiles)) # contain both normalized and rawcount
+expr <- read.delim(fnames[2],header=TRUE, check.names = FALSE) # rawcount
+dim(expr) # 57268    25
+
+# Display rawcount file
+kable(expr[1:5,1:5], format = "html")
+```
+## Group samples - pre-filtered
+```{r samples_prefiltered}
+samples <- data.frame("patients" = 1:24,"cell_type"=1:24)
+rownames(samples) <- colnames(expr)[2:25]
+
+for (i in 1:12){
+  samples$cell_type[i] = "Primary Tumour"
+  samples$patients[i] = i
+  samples$patients[i + 12] = i
+}
+
+for (j in 13:24){
+  samples$cell_type[j] = "Sphere"
+}
+
+# Add cell_type to sample names
+cell_type_indicator <- substring(samples$cell_type,1,1) # first characters of cell types
+rownames(samples) <- paste0(rownames(samples), sep="_", cell_type_indicator)
+
+# display grouped format
+kable(samples, format = "html")  
+```
+
+## Check GENEID duplications
+```{r check GENEID dup, results="hide"}
+# NO duplications!
+summarized_gene_counts_filtered <- sort(table(expr[,1]),decreasing = TRUE)
+length(summarized_gene_counts_filtered[which(summarized_gene_counts_filtered>1)]) # 0
+```
+## Explore 
+### Boxplot - prefiltered
+```{r boxplot_prefiltered, warning=FALSE}
+## prefiltered counts
+data2plot <- log2(cpm(expr[,2:ncol(expr)]))
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 0.5,
+        cex.axis = 0.5, main = "pre-filtered RNASeq Samples")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)), col = "green", lwd = 0.6, lty = "dashed")
+```
+
+## Density Plot - prefiltered
+```{r density_prefiltered}
+counts_density <- apply(log2(expr[,2:ncol(expr)]), 2, density)
+  #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x)); 
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+         ylab="Smoothing density of log2-CPM",cex.lab = 0.85, 
+         main = "Pre-filtered Density distribution")
+    #plot each line
+    for (i in 1:length(counts_density)) lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),  
+           col=cols, lty=ltys, cex=0.75, 
+           border ="blue",  text.col = "green4", 
+           merge = TRUE, bg = "gray90")
+```
+
+## MDS plot - prefiltered
+```{r MDS_prefiltered}
+## prefiltered MDS plot
+plotMDS(d, labels=rownames(samples),
+        col = c("darkgreen","blue")[factor(samples$cell_type)], 
+        main = "Pre-filtered MDS plot")
+```
+
+### Filter 
+```{r filter}
+# translate out counts into counts per million
+cpms = cpm(expr[,2:25])
+rownames(cpms) <- expr[,1]
+# get rid of low counts
+keep = rowSums(cpms > 1) >= 3
+expr_filtered <- expr[keep,]
+outliers_removed <- nrow(expr) - nrow(expr_filtered) # 37395
+dim(expr_filtered) # 19873    25
+
+# Display rawcount file
+kable(expr_filtered[1:5,1:5], format = "html")
+```
+### Explore: filtered
+```{r boxplot_filtered, warning=FALSE}
+data2plot <- log2(cpm(expr_filtered[,3:ncol(expr_filtered)]))
+boxplot(data2plot, xlab = "Samples", ylab = "log2 CPM", 
+        las = 2, cex = 0.5, cex.lab = 0.5,
+        cex.axis = 0.5, main = "Filtered RNASeq Samples")
+#draw the median on each box plot
+abline(h = median(apply(data2plot, 2, median)), col = "green", lwd = 0.6, lty = "dashed")
+```
+
+```{r}
+counts_density <- apply(log2(expr_filtered[,3:ncol(expr_filtered)]), 2, density)
+  #calculate the limits across all the samples
+    xlim <- 0; ylim <- 0
+    for (i in 1:length(counts_density)) {
+      xlim <- range(c(xlim, counts_density[[i]]$x)); 
+      ylim <- range(c(ylim, counts_density[[i]]$y))
+    }
+    cols <- rainbow(length(counts_density))
+    ltys <- rep(1, length(counts_density))
+    #plot the first density plot to initialize the plot
+    plot(counts_density[[1]], xlim=xlim, ylim=ylim, type="n", 
+         ylab="Smoothing density of log2-CPM",cex.lab = 0.85, 
+         main = "Filtered Density distribution")
+    #plot each line
+    for (i in 1:length(counts_density)) lines(counts_density[[i]], col=cols[i], lty=ltys[i])
+    #create legend
+    legend("topright", colnames(data2plot),  
+           col=cols, lty=ltys, cex=0.75, 
+           border ="blue",  text.col = "green4", 
+           merge = TRUE, bg = "gray90")
+```
+
+
+## MDS plot - filtered
+```{r}
+## Filtered MDS plot
+plotMDS(d, labels=rownames(samples_filtered),
+        col = c("darkgreen","blue")[factor(samples_filtered$cell_type)])
+```
+## Identifier mapping
+```{r identifier mapping, results='hide'}
+ensembl_id <- as.character(expr_filtered[,1])
+
+EnsDb_trans_ensembl<- ensembldb::select(EnsDb.Hsapiens.v75,
+                                         keys = ensembl_id, 
+                                         columns="SYMBOL",
+                                         keytype="GENEID")
+
+data.frame(EnsDb_trans_ensembl)
+nrow(EnsDb_trans_ensembl) # 19856 ids mapped
+```
+## Unmapped GENEIDs
+I proved in A1 that the 17 unmapped gene ids are actually duplicates. The reason why the previous check did not catch them was because if we change the "R" to "0", they can be detected. (They are exactly same, except locating on the Y chromosome). So here I am just going to remove them.
+```{r unmapped GENEIDs}
+test_filtered <- expr_filtered
+
+# merge mapped df EnsDb_trans_ensembl and unmapped df test_filtered
+test_filtered <- merge(EnsDb_trans_ensembl,
+                       test_filtered, 
+                       by.x=1, by.y=1, all.y=TRUE )
+# nrow(test_filtered) # 19873
+kable(test_filtered[1:5, 1:5], format = "html")  
+
+# duplicated ensembl id
+dup_gene_id <- (test_filtered$GENEID[which(is.na(test_filtered$SYMBOL))])
+length(dup_gene_id) # 17
+
+# display the unmapped ensembl ids
+kable(test_filtered[which(is.na(test_filtered$SYMBOL)),][,1:5], format = "html")
+
+# Since I have proved it, I will directly exclude them from expr_filtered
+test_filtered <- test_filtered[-which(is.na(test_filtered$SYMBOL)),]
+nrow(test_filtered) # 19856
+expr_filtered <- test_filtered
+nrow(expr_filtered) # 19856
+rownames(expr_filtered) <- 1:nrow(expr_filtered)
+(num_dup_id <- length(expr_filtered$GENEID[which(duplicated(expr_filtered$GENEID))])) # 0 duplicated
+
+all(EnsDb_trans_ensembl$GENEID == expr_filtered$GENEID) # TRUE
+all(EnsDb_trans_ensembl$SYMBOL == expr_filtered$SYMBOL) # TRUE
+```
+
+## Group samples - Filtered (SAME)
+```{r samples_filtered}
+samples_filtered <- data.frame("patients" = 1:24,"cell_type"=1:24)
+rownames(samples_filtered) <- colnames(expr_filtered)[3:ncol(expr_filtered)]
+
+for (i in 1:12){
+  samples_filtered$cell_type[i] = "Primary Tumour"
+  samples_filtered$patients[i] = i
+  samples_filtered$patients[i + 12] = i
+}
+
+for (j in 13:24){
+  samples_filtered$cell_type[j] = "Sphere"
+}
+
+# Add cell_type to sample names
+cell_type_indicator <- substring(samples_filtered$cell_type,1,1) # first characters of cell types
+rownames(samples_filtered) <- paste0(rownames(samples_filtered), sep="_", cell_type_indicator)
+
+# display grouped format
+kable(samples_filtered, format = "html")  
+```
+
+## GENE name duplication - 12
+  * In A1 I showed that there are 41 duplications (12 unique ones), Ruth sugguested to keep them because it is a very small percent. But I find the MDS plot (color by sample) will be a little messy if I keep them. But color by patient totaly works.
+```{r check SYMBOL dup, results='hide'}
+dup_gene_name <- sort(table(expr_filtered$SYMBOL),decreasing = TRUE)
+length(dup_gene_name[which(dup_gene_name>1)]) # 12
+```
+
+## Apply normalization on expr_filtered
+```{r}
+# need a matrix with only values
+filtered_data_matrix <- as.matrix(expr_filtered[,3:ncol(expr_filtered)])
+
+# Rownames be the ensembl id
+rownames(filtered_data_matrix) <- expr_filtered$GENEID
+
+# DEGList object
+d <- DGEList(counts=filtered_data_matrix, group=samples_filtered$cell_type)
+
+# Normalization
+d <- calcNormFactors(d)
+
+# get normalized counts
+normalized_counts <- cpm(d)
+
+normalized_counts <- data.frame(normalized_counts)
+normalized_counts <- cbind("SYMBOL" = expr_filtered$SYMBOL, normalized_counts)
+normalized_counts <- cbind("GENEID" = expr_filtered$GENEID, normalized_counts)
+nrow(normalized_counts) # 19856
+# HUGO symbols as rownames of the dataframe
+kable(normalized_counts[1:5,1:5], format = "html")
+# All rows have a unique HUGO symbols, 
+sum(duplicated(rownames(normalized_counts))) # 0
+write.table(normalized_counts, file="GSE84054_normalized_count.txt")
+```
