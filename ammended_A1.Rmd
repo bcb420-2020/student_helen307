@@ -4,7 +4,7 @@ output:
   html_document: default
 ---
 # A1
-My data is from GSE84054
+My data is from GSE84054 [@goh2017chromosome]
 
 What I have changed in A1: I decided to leave the genes that have duplicated names because Ruth sugguested that they are a very small number compare to my total number of genes, ~1%. So I deleted many steps in A1, and made the cleaning step clearer by showing boxplots, density plots and MDS plots in each cleaning step.
 ```{r}
@@ -37,7 +37,7 @@ library(GEOquery)
 # Download dataset
 datafile <- "GSE84054_Rawcount_12patientER.txt.gz"
 if (!file.exists(datafile)) {
-    sfiles <- GEOquery::getGEOSuppFiles('GSE84054', makeDirectory = FALSE)
+    datafile <- GEOquery::getGEOSuppFiles('GSE84054', makeDirectory = FALSE)
 }
 expr <- read.delim(datafile,header=TRUE,check.names=FALSE)
 (fnames <- rownames(sfiles)) # contain both normalized and rawcount
